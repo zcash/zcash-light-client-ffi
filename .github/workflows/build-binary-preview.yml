@@ -22,8 +22,8 @@ jobs:
       - name: Switch to the corresponding preview branch, or create it if needed
         run: git switch "preview/${GITHUB_REF_NAME}" || git switch -c "preview/${GITHUB_REF_NAME}"
 
-      - name: Merge the ref into the preview branch (no-op if created new)
-        run: git merge "${GITHUB_REF_NAME}"
+      - name: Create a temporary branch from the ref for the build.
+        run: git checkout -b "tmp/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
 
       # https://github.com/actions/runner-images/blob/main/images/macos/macos-13-Readme.md#xcode
       - name: Select the required Xcode version
@@ -52,13 +52,25 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Build the binaries
+      - name: Build the binaries on the temporary branch
         run: make xcframework
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
 
-      - uses: stefanzweifel/git-auto-commit-action@v5
+      - uses: EndBug/add-and-commit@a94899bca583c204427a224a7af87c02f9b325d5
         with:
-          commit_message: 'make xcframework'
-          branch: 'preview/${{ github.ref_name }}'
+          message: 'preview build for ${{ github.ref_name }} commit ${{ github.sha }}'
+          push: false
+
+      - name: Merge the preview branch into the temporary branch, ignoring conflicts with `-s ours`.
+        run: git merge -s ours -m "merge artifacts built from ${GITHUB_SHA} to preview/${GITHUB_REF_NAME}" "preview/${GITHUB_REF_NAME}"
+
+      - name: Switch back to the preview branch.
+        run: git switch "preview/${GITHUB_REF_NAME}"
+
+      - name: Merge & delete the temporary branch.
+        run: git merge --ff-only "tmp/${GITHUB_REF_NAME}" && git branch -d "tmp/${GITHUB_REF_NAME}"
+
+      - name: Push the preview branch back to the upstream repository
+        run: git push origin "preview/${GITHUB_REF_NAME}"
