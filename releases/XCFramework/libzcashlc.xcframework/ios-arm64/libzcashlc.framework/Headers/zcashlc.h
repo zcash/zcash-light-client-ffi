@@ -4,6 +4,44 @@
 #include <stdlib.h>
 
 /**
+ * Specifies how a "spend max" request should be evaluated.
+ */
+typedef enum FfiMaxSpendMode {
+  /**
+   * `MaxSpendable` will target to spend all _currently_ spendable funds where it
+   * could be the case that the wallet has received other funds that are not
+   * confirmed and therefore not spendable yet and the caller evaluates that as
+   * an acceptable scenario.
+   */
+  MaxSpendable,
+  /**
+   * `Everything` will target to spend **all funds** and will fail if there are
+   * unspendable funds in the wallet or if the wallet is not yet synced.
+   */
+  Everything,
+} FfiMaxSpendMode;
+
+/**
+ * A type describing the mined-ness of transactions that should be returned in response to a
+ * [`TransactionDataRequest`].
+ *
+ */
+typedef enum TransactionStatusFilter {
+  /**
+   * Only mined transactions should be returned.
+   */
+  TransactionStatusFilter_Mined,
+  /**
+   * Only mempool transactions should be returned.
+   */
+  TransactionStatusFilter_Mempool,
+  /**
+   * Both mined transactions and transactions in the mempool should be returned.
+   */
+  TransactionStatusFilter_All,
+} TransactionStatusFilter;
+
+/**
  * A type used to filter transactions to be returned in response to a [`TransactionDataRequest`],
  * in terms of the spentness of the transaction's transparent outputs.
  *
@@ -34,26 +72,6 @@ typedef enum TorDormantMode {
    */
   Soft,
 } TorDormantMode;
-
-/**
- * A type describing the mined-ness of transactions that should be returned in response to a
- * [`TransactionDataRequest`].
- *
- */
-typedef enum TransactionStatusFilter {
-  /**
-   * Only mined transactions should be returned.
-   */
-  TransactionStatusFilter_Mined,
-  /**
-   * Only mempool transactions should be returned.
-   */
-  TransactionStatusFilter_Mempool,
-  /**
-   * Both mined transactions and transactions in the mempool should be returned.
-   */
-  TransactionStatusFilter_All,
-} TransactionStatusFilter;
 
 /**
  * A struct that contains a ZIP 325 Account Metadata Key.
@@ -121,6 +139,16 @@ typedef struct FFIBinaryKey {
   uint8_t *encoding;
   uintptr_t encoding_len;
 } FFIBinaryKey;
+
+/**
+ * A single-use transparent address, along with metadata about the address's use within the
+ * wallet's ephemeral gap limit.
+ */
+typedef struct FfiSingleUseTaddr {
+  char *address;
+  uint32_t gap_position;
+  uint32_t gap_limit;
+} FfiSingleUseTaddr;
 
 /**
  * A struct that contains an account identifier along with a pointer to the string encoding
@@ -665,6 +693,33 @@ typedef struct Decimal {
 } Decimal;
 
 /**
+ * The result of checking for UTXOs received by an ephemeral address.
+ *
+ */
+enum FfiAddressCheckResult_Tag {
+  /**
+   * No UTXOs were found as a result of the check.
+   */
+  FfiAddressCheckResult_NotFound,
+  /**
+   * UTXOs were found for the given address.
+   */
+  FfiAddressCheckResult_Found,
+};
+typedef uint8_t FfiAddressCheckResult_Tag;
+
+typedef struct FfiAddressCheckResult_Found_Body {
+  char *address;
+} FfiAddressCheckResult_Found_Body;
+
+typedef struct FfiAddressCheckResult {
+  FfiAddressCheckResult_Tag tag;
+  union {
+    FfiAddressCheckResult_Found_Body found;
+  };
+} FfiAddressCheckResult;
+
+/**
  * A struct that contains a Zcash unified address, along with the diversifier index used to
  * generate that address.
  */
@@ -922,6 +977,43 @@ int8_t zcashlc_is_seed_relevant_to_any_derived_account(const uint8_t *db_data,
                                                        uint32_t network_id);
 
 /**
+ * Deletes the specified account, and all transactions that exclusively involve it, from the
+ * wallet database.
+ *
+ * WARNING: This is a destructive operation and may result in the permanent loss of
+ * potentially important information that is not recoverable from chain data, including:
+ * * Data about transactions sent by the account for which [`OvkPolicy::Discard`] (or
+ *   [`OvkPolicy::Custom`] with random OVKs) was used;
+ * * Data related to transactions that the account attempted to send that expired or were
+ *   otherwise invalidated without having been mined in the main chain;
+ * * Data related to transactions that were observed in the mempool as having inputs or
+ *   outputs that involved the account, but that were never mined in the main chain;
+ * * Data related to transactions that were received by the wallet in a mined block, where
+ *   that block was later un-mined in a chain reorg and the transaction was either invalidated
+ *   or was never re-mined.
+ *
+ * Returns `true` on success, or `false` if an error is raised.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - `seed` must be non-null and valid for reads for `seed_len` bytes, and it must have an
+ *   alignment of `1`.
+ *
+ * [`OvkPolicy::Discard`]: zcash_client_backend::wallet::OvkPolicy::Discard
+ * [`OvkPolicy::Custom`]: zcash_client_backend::wallet::OvkPolicy::Custom
+ */
+bool zcashlc_delete_account(const uint8_t *db_data,
+                            uintptr_t db_data_len,
+                            uint32_t network_id,
+                            const uint8_t *account_uuid_bytes);
+
+/**
  * Returns the most-recently-generated unified payment address for the specified account.
  *
  * # Safety
@@ -943,6 +1035,30 @@ char *zcashlc_get_current_address(const uint8_t *db_data,
                                   uintptr_t db_data_len,
                                   const uint8_t *account_uuid_bytes,
                                   uint32_t network_id);
+
+/**
+ * Generates and returns an ephemeral address for one-time use, such as when receiving a swap from
+ * a decentralized exchange.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an
+ *   alignment of `1`.
+ * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
+ *   function call.
+ * - Call [`zcashlc_free_single_use_address`] to free the memory associated with the returned pointer
+ *   when done using it.
+ */
+struct FfiSingleUseTaddr *zcashlc_get_single_use_taddr(const uint8_t *db_data,
+                                                       uintptr_t db_data_len,
+                                                       uint32_t network_id,
+                                                       const uint8_t *account_uuid_bytes);
 
 /**
  * Returns a newly-generated unified payment address for the specified account, with the next
@@ -1282,6 +1398,8 @@ int64_t zcashlc_max_scanned_height(const uint8_t *db_data,
  *   function call.
  * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
  *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_wallet_summary`] to free the memory associated with the returned
+ *   pointer when done using it.
  */
 struct FfiWalletSummary *zcashlc_get_wallet_summary(const uint8_t *db_data,
                                                     uintptr_t db_data_len,
@@ -1527,6 +1645,38 @@ struct FfiBoxedSlice *zcashlc_propose_transfer(const uint8_t *db_data,
                                                const uint8_t *memo,
                                                uint32_t network_id,
                                                struct ConfirmationsPolicy confirmations_policy);
+
+/**
+ * Selects all spendable transaction inputs, computes fees, and constructs a proposal for a transaction
+ * that can then be authorized and made ready for submission to the network with
+ * `zcashlc_create_proposed_transaction`.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - `account_uuid_bytes` must be non-null and valid for reads for 16 bytes, and it must have an alignment
+ *   of `1`.
+ * - The memory referenced by `account_uuid_bytes` must not be mutated for the duration of the
+ *   function call.
+ * - `to` must be non-null and must point to a null-terminated UTF-8 string.
+ * - `memo` must either be null (indicating an empty memo or a transparent recipient) or point to a
+ *   512-byte array.
+ * - Call [`zcashlc_free_boxed_slice`] to free the memory associated with the returned
+ *   pointer when done using it.
+ */
+struct FfiBoxedSlice *zcashlc_propose_send_max_transfer(const uint8_t *db_data,
+                                                        uintptr_t db_data_len,
+                                                        uint32_t network_id,
+                                                        const uint8_t *account_uuid_bytes,
+                                                        const char *to,
+                                                        const uint8_t *memo,
+                                                        enum FfiMaxSpendMode mode,
+                                                        struct ConfirmationsPolicy confirmations_policy);
 
 /**
  * Select transaction inputs, compute fees, and construct a proposal for a transaction
@@ -2216,6 +2366,100 @@ struct FfiBoxedSlice *zcashlc_tor_lwd_conn_get_tree_state(struct LwdConn *lwd_co
                                                           uint32_t height);
 
 /**
+ * Finds all transactions associated with the given transparent address within the given block
+ * range, and calls [`decrypt_and_store_transaction`] with each such transaction.
+ *
+ * The query to the light wallet server will cover the provided block range. The end height is
+ * optional; to omit the end height for the query range use the sentinel value `-1`. If any other
+ * value is specified, it must be in the range of a valid u32. Note that older versions of
+ * `lightwalletd` will return an error if the end height is not specified.
+ *
+ * Returns an [`ffi::AddressCheckResult`] if successful, or a null pointer in the case of an
+ * error.
+ *
+ * # Safety
+ *
+ * - `lwd_conn` must be a non-null pointer returned by a `zcashlc_*` method with
+ *   return type `*mut tor::LwdConn` that has not previously been freed.
+ * - `lwd_conn` must not be passed to two FFI calls at the same time.
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_address_check_result`] to free the memory associated with the returned
+ *   pointer when done using it.
+ */
+struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_update_transparent_address_transactions(struct LwdConn *lwd_conn,
+                                                                                           const uint8_t *db_data,
+                                                                                           uintptr_t db_data_len,
+                                                                                           uint32_t network_id,
+                                                                                           const char *address,
+                                                                                           uint32_t start,
+                                                                                           int64_t end);
+
+/**
+ * Checks to find any UTXOs associated with the given transparent address.
+ *
+ * This check will cover the block range starting at the exposure height for that address, if
+ * known, or otherwise at the birthday height of the specified account.
+ *
+ * Returns an [`ffi::AddressCheckResult`] if successful, or a null pointer in the case of an
+ * error.
+ *
+ * # Safety
+ *
+ * - `lwd_conn` must be a non-null pointer returned by a `zcashlc_*` method with
+ *   return type `*mut tor::LwdConn` that has not previously been freed.
+ * - `lwd_conn` must not be passed to two FFI calls at the same time.
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_address_check_result`] to free the memory associated with the returned
+ *   pointer when done using it.
+ */
+struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_fetch_utxos_by_address(struct LwdConn *lwd_conn,
+                                                                          const uint8_t *db_data,
+                                                                          uintptr_t db_data_len,
+                                                                          uint32_t network_id,
+                                                                          const uint8_t *account_uuid_bytes,
+                                                                          const char *address);
+
+/**
+ * Checks to find any single-use ephemeral addresses exposed in the past day that have not yet
+ * received funds, excluding any whose next check time is in the future. This will then choose the
+ * address that is most overdue for checking, retrieve any UTXOs for that address over Tor, and
+ * add them to the wallet database. If no such UTXOs are found, the check will be rescheduled
+ * following an expoential-backoff-with-jitter algorithm.
+ *
+ * Returns an [`ffi::AddressCheckResult`] if successful, or a null pointer in the case of an
+ * error.
+ *
+ * # Safety
+ *
+ * - `lwd_conn` must be a non-null pointer returned by a `zcashlc_*` method with
+ *   return type `*mut tor::LwdConn` that has not previously been freed.
+ * - `lwd_conn` must not be passed to two FFI calls at the same time.
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of pointer::offset.
+ * - Call [`zcashlc_free_address_check_result`] to free the memory associated with the returned
+ *   pointer when done using it.
+ */
+struct FfiAddressCheckResult *zcashlc_tor_lwd_conn_check_single_use_taddr(struct LwdConn *lwd_conn,
+                                                                          const uint8_t *db_data,
+                                                                          uintptr_t db_data_len,
+                                                                          uint32_t network_id,
+                                                                          const uint8_t *account_uuid_bytes);
+
+/**
  * Returns the network type and address kind for the given address string,
  * if the address is a valid Zcash address.
  *
@@ -2675,3 +2919,21 @@ void zcashlc_free_account_metadata_key(struct FfiAccountMetadataKey *ptr);
  * - `ptr` must either be null or point to a struct having the layout of [`HttpResponseBytes`].
  */
 void zcashlc_free_http_response_bytes(struct FfiHttpResponseBytes *ptr);
+
+/**
+ * Frees an [`SingleUseTaddr`] value.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-null and must point to a struct having the layout of [`SingleUseTaddr`].
+ */
+void zcashlc_free_single_use_taddr(struct FfiSingleUseTaddr *ptr);
+
+/**
+ * Frees an [`AddressCheckResult`] value.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-null and must point to a struct having the layout of [`AddressCheckResult`].
+ */
+void zcashlc_free_address_check_result(struct FfiAddressCheckResult *ptr);
