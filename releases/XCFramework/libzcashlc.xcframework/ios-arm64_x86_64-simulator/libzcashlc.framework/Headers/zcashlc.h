@@ -74,6 +74,21 @@ typedef enum TorDormantMode {
 } TorDormantMode;
 
 /**
+ * An exchange for which we know how to query the ZEC-USD exchange rate.
+ */
+typedef enum FfiZecUsdExchange {
+  Binance,
+  CoinEx,
+  Coinbase,
+  DigiFinex,
+  Gemini,
+  Kraken,
+  KuCoin,
+  Mexc,
+  Xt,
+} FfiZecUsdExchange;
+
+/**
  * A struct that contains a ZIP 325 Account Metadata Key.
  */
 typedef struct FfiAccountMetadataKey FfiAccountMetadataKey;
@@ -2257,6 +2272,38 @@ struct FfiHttpResponseBytes *zcashlc_tor_http_post(struct TorRuntime *tor_runtim
  * - `tor_runtime` must not be passed to two FFI calls at the same time.
  */
 struct Decimal zcashlc_get_exchange_rate_usd(struct TorRuntime *tor_runtime);
+
+/**
+ * Fetches the current ZEC-USD exchange rate over Tor from the specified exchanges.
+ *
+ * The result is a [`Decimal`] struct containing the fields necessary to construct an
+ * [`NSDecimalNumber`](https://developer.apple.com/documentation/foundation/nsdecimalnumber/1416003-init).
+ *
+ * Returns a negative value on error.
+ *
+ * # Safety
+ *
+ * - `tor_runtime` must be a non-null pointer returned by a `zcashlc_*` method with
+ *   return type `*mut TorRuntime` that has not previously been freed.
+ * - `tor_runtime` must not be passed to two FFI calls at the same time.
+ * - `exchanges` must be non-null and valid for reads for
+ *   `exchanges_len * size_of::<ffi::ZecUsdExchange>()` bytes, and it must be properly
+ *   aligned. This means in particular:
+ *   - The entire memory range of this slice must be contained within a single allocated
+ *     object! Slices can never span across multiple allocated objects.
+ *   - `exchanges` must be non-null and aligned even for zero-length slices.
+ * - `exchanges` must point to `exchanges_len` consecutive properly initialized values of
+ *   type `ffi::ZecUsdExchange`.
+ * - The memory referenced by `exchanges` must not be mutated for the duration of the function
+ *   call.
+ * - The total size `exchanges_len * size_of::<ffi::ZecUsdExchange>()` of the slice must
+ *   be no larger than `isize::MAX`, and adding that size to `exchanges` must not "wrap
+ *   around" the address space.  See the safety documentation of `pointer::offset`.
+ */
+struct Decimal zcashlc_get_exchange_rate_usd_from(struct TorRuntime *tor_runtime,
+                                                  enum FfiZecUsdExchange trusted_exchange,
+                                                  const enum FfiZecUsdExchange *exchanges,
+                                                  uintptr_t exchanges_len);
 
 /**
  * Connects to the lightwalletd server at the given endpoint.
