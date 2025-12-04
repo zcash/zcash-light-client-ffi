@@ -16,19 +16,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Switch to the corresponding preview branch, or create it if needed
-        run: git switch "preview/${GITHUB_REF_NAME}" || git switch -c "preview/${GITHUB_REF_NAME}"
-
       - name: Create a temporary branch from the ref for the build.
         run: git checkout -b "tmp/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
 
       # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md#xcode
       - name: Select the required Xcode version
-        run: sudo xcode-select -s '/Applications/Xcode_16.4.0.app/Contents/Developer'
+        run: sudo xcode-select -s '/Applications/Xcode_13.0.0.app/Contents/Developer'
 
       - uses: actions/cache@v4
         with:
