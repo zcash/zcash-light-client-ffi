@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: macos-15-intel
+    runs-on: macos
     permissions:
       contents: write
     steps:
@@ -25,10 +25,6 @@ jobs:
 
       - name: Create a temporary branch from the ref for the build.
         run: git checkout -b "tmp/${GITHUB_REF_NAME}" "${GITHUB_REF_NAME}"
-
-      # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md#xcode
-      - name: Select the required Xcode version
-        run: sudo xcode-select -s '/Applications/Xcode_16.4.0.app/Contents/Developer'
 
       - uses: actions/cache@v4
         with:
