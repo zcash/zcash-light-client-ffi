@@ -6,6 +6,10 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- `ffi::{ReceivedOutput, ReceivedOutputs}`
+- `zcashlc_get_received_transaction_outputs`
+
 ## 0.19.1 - 2025-11-26
 
 ### Added
