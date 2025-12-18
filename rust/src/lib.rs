@@ -2095,7 +2095,7 @@ pub unsafe extern "C" fn zcashlc_propose_transfer(
         let (change_strategy, input_selector) = zip317_helper(None);
 
         let req = TransactionRequest::new(vec![
-            Payment::new(to, value, memo, None, None, vec![]).ok_or_else(|| {
+            Payment::new(to, Some(value), memo, None, None, vec![]).ok_or_else(|| {
                 anyhow!("Memos are not permitted when sending to transparent recipients.")
             })?,
         ])
