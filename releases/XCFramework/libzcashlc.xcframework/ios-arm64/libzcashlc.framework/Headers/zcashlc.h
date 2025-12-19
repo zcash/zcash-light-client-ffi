@@ -637,6 +637,36 @@ typedef struct FfiTransactionDataRequests {
 } FfiTransactionDataRequests;
 
 /**
+ * A received transaction output from any pool (transparent, sapling, orchard).
+ */
+typedef struct FfiReceivedTransactionOutput {
+  /**
+   * Pool type (0 = transparent, 2 = sapling, 3 = orchard)
+   */
+  uint32_t pool_type;
+  /**
+   * Output index within the transaction
+   */
+  uint32_t output_index;
+  /**
+   * Value in zatoshis
+   */
+  uint64_t value;
+  /**
+   * Number of confirmations until spendable
+   */
+  uint32_t confirmations_until_spendable;
+} FfiReceivedTransactionOutput;
+
+/**
+ * A collection of received outputs.
+ */
+typedef struct FfiReceivedTransactionOutputs {
+  struct FfiReceivedTransactionOutput *ptr;
+  uintptr_t len;
+} FfiReceivedTransactionOutputs;
+
+/**
  * An HTTP header from a response.
  *
  * Memory is managed by Rust.
@@ -2115,6 +2145,28 @@ struct FfiTransactionDataRequests *zcashlc_transaction_data_requests(const uint8
 void zcashlc_fix_witnesses(const uint8_t *db_data, uintptr_t db_data_len, uint32_t network_id);
 
 /**
+ * Returns data regarding the outputs of the specified transaction that involve the wallet.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+ *   alignment of `1`. Its contents must be a string representing a valid system path in the
+ *   operating system's preferred representation.
+ * - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+ * - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+ *   documentation of `std::slice::from_raw_parts`.
+ * - `txid_bytes` must be non-null and must point to a 32-byte array representing the transaction ID.
+ * - The memory referenced by `txid_bytes` must not be mutated for the duration of the function call.
+ * - Call [`zcashlc_free_received_outputs`] to free the memory associated with the returned pointer
+ *   when done using it.
+ */
+struct FfiReceivedTransactionOutputs *zcashlc_get_received_transaction_outputs(const uint8_t *db_data,
+                                                                               uintptr_t db_data_len,
+                                                                               uint32_t network_id,
+                                                                               const uint8_t *txid_bytes,
+                                                                               struct ConfirmationsPolicy confirmations_policy);
+
+/**
  * Creates a Tor runtime.
  *
  * # Safety
@@ -2984,3 +3036,13 @@ void zcashlc_free_single_use_taddr(struct FfiSingleUseTaddr *ptr);
  * - `ptr` must be non-null and must point to a struct having the layout of [`AddressCheckResult`].
  */
 void zcashlc_free_address_check_result(struct FfiAddressCheckResult *ptr);
+
+/**
+ * Frees a [`ReceivedTransactionOutputs`] value.
+ *
+ * # Safety
+ *
+ * - `ptr` must be non-null and must point to a struct having the layout of
+ *   [`ReceivedTransactionOutputs`].
+ */
+void zcashlc_free_received_outputs(struct FfiReceivedTransactionOutputs *ptr);
