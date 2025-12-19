@@ -1271,3 +1271,67 @@ pub unsafe extern "C" fn zcashlc_free_address_check_result(ptr: *mut AddressChec
         drop(res)
     }
 }
+
+/// A received transaction output from any pool (transparent, sapling, orchard).
+#[repr(C)]
+pub struct ReceivedTransactionOutput {
+    /// Pool type (0 = transparent, 2 = sapling, 3 = orchard)
+    pool_type: u32,
+    /// Output index within the transaction
+    output_index: u32,
+    /// Value in zatoshis
+    value: u64,
+    /// Number of confirmations until spendable
+    confirmations_until_spendable: u32,
+}
+
+impl ReceivedTransactionOutput {
+    pub(crate) fn from_received_transaction_output(
+        output: &zcash_client_backend::data_api::ReceivedTransactionOutput,
+    ) -> Self {
+        use zcash_protocol::PoolType;
+
+        let pool_type = match output.pool_type() {
+            PoolType::Transparent => 0,
+            PoolType::Shielded(zcash_protocol::ShieldedProtocol::Sapling) => 2,
+            PoolType::Shielded(zcash_protocol::ShieldedProtocol::Orchard) => 3,
+        };
+
+        ReceivedTransactionOutput {
+            pool_type,
+            output_index: u32::try_from(output.output_index())
+                .expect("output index fits into a u32"),
+            value: output.value().into_u64(),
+            confirmations_until_spendable: output.confirmations_until_spendable(),
+        }
+    }
+}
+
+/// A collection of received outputs.
+#[repr(C)]
+pub struct ReceivedTransactionOutputs {
+    ptr: *mut ReceivedTransactionOutput,
+    len: usize,
+}
+
+impl ReceivedTransactionOutputs {
+    pub(crate) fn ptr_from_vec(outputs: Vec<ReceivedTransactionOutput>) -> *mut Self {
+        let (ptr, len) = ptr_from_vec(outputs);
+        Box::into_raw(Box::new(ReceivedTransactionOutputs { ptr, len }))
+    }
+}
+
+/// Frees a [`ReceivedTransactionOutputs`] value.
+///
+/// # Safety
+///
+/// - `ptr` must be non-null and must point to a struct having the layout of
+///   [`ReceivedTransactionOutputs`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_free_received_outputs(ptr: *mut ReceivedTransactionOutputs) {
+    if !ptr.is_null() {
+        let outputs: Box<ReceivedTransactionOutputs> = unsafe { Box::from_raw(ptr) };
+        free_ptr_from_vec(outputs.ptr, outputs.len);
+        drop(outputs);
+    }
+}

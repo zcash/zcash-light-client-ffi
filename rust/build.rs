@@ -51,6 +51,11 @@ fn main() {
         .rename_item("TransactionStatus", "FfiTransactionStatus")
         .rename_item("TransactionDataRequest", "FfiTransactionDataRequest")
         .rename_item("TransactionDataRequests", "FfiTransactionDataRequests")
+        .rename_item("ReceivedTransactionOutput", "FfiReceivedTransactionOutput")
+        .rename_item(
+            "ReceivedTransactionOutputs",
+            "FfiReceivedTransactionOutputs",
+        )
         .rename_item("Address", "FfiAddress")
         .rename_item("AccountMetadataKey", "FfiAccountMetadataKey")
         .rename_item("SymmetricKeys", "FfiSymmetricKeys")
