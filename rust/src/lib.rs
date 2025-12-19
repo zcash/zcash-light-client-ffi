@@ -2095,7 +2095,7 @@ pub unsafe extern "C" fn zcashlc_propose_transfer(
         let (change_strategy, input_selector) = zip317_helper(None);
 
         let req = TransactionRequest::new(vec![
-            Payment::new(to, value, memo, None, None, vec![]).ok_or_else(|| {
+            Payment::new(to, Some(value), memo, None, None, vec![]).ok_or_else(|| {
                 anyhow!("Memos are not permitted when sending to transparent recipients.")
             })?,
         ])
@@ -3064,6 +3064,52 @@ pub unsafe extern "C" fn zcashlc_fix_witnesses(
         }
 
         Ok(())
+    });
+    unwrap_exc_or_null(res)
+}
+
+/// Returns data regarding the outputs of the specified transaction that involve the wallet.
+///
+/// # Safety
+///
+/// - `db_data` must be non-null and valid for reads for `db_data_len` bytes, and it must have an
+///   alignment of `1`. Its contents must be a string representing a valid system path in the
+///   operating system's preferred representation.
+/// - The memory referenced by `db_data` must not be mutated for the duration of the function call.
+/// - The total size `db_data_len` must be no larger than `isize::MAX`. See the safety
+///   documentation of `std::slice::from_raw_parts`.
+/// - `txid_bytes` must be non-null and must point to a 32-byte array representing the transaction ID.
+/// - The memory referenced by `txid_bytes` must not be mutated for the duration of the function call.
+/// - Call [`zcashlc_free_received_outputs`] to free the memory associated with the returned pointer
+///   when done using it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_get_received_transaction_outputs(
+    db_data: *const u8,
+    db_data_len: usize,
+    network_id: u32,
+    txid_bytes: *const u8,
+    confirmations_policy: ffi::ConfirmationsPolicy,
+) -> *mut ffi::ReceivedTransactionOutputs {
+    let res = catch_panic(|| {
+        let network = parse_network(network_id)?;
+        let db_data = unsafe { wallet_db(db_data, db_data_len, network)? };
+
+        let txid_bytes = unsafe { slice::from_raw_parts(txid_bytes, 32) };
+        let txid = TxId::read(txid_bytes)?;
+        let confirmations_policy = wallet::ConfirmationsPolicy::try_from(confirmations_policy)?;
+
+        let target_height = db_data
+            .get_target_and_anchor_heights(NonZeroU32::MIN)?
+            .map(|(t, _)| t)
+            .ok_or(SqliteClientError::ChainHeightUnknown)?;
+        let outputs = db_data.get_received_outputs(txid, target_height, confirmations_policy)?;
+
+        let ffi_outputs: Vec<ffi::ReceivedTransactionOutput> = outputs
+            .iter()
+            .map(ffi::ReceivedTransactionOutput::from_received_transaction_output)
+            .collect();
+
+        Ok(ffi::ReceivedTransactionOutputs::ptr_from_vec(ffi_outputs))
     });
     unwrap_exc_or_null(res)
 }
