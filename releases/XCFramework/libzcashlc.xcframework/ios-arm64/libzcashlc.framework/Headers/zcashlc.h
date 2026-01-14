@@ -95,6 +95,13 @@ typedef struct FfiAccountMetadataKey FfiAccountMetadataKey;
 
 typedef struct LwdConn LwdConn;
 
+/**
+ * Opaque handle to a PIR client.
+ *
+ * This wraps the Rust BlockingNullifierPirClient for FFI use.
+ */
+typedef struct FfiPirClientHandle FfiPirClientHandle;
+
 typedef struct TorRuntime TorRuntime;
 
 /**
@@ -742,6 +749,47 @@ typedef struct FfiAddress {
   char *address;
   uint8_t diversifier_index_bytes[11];
 } FfiAddress;
+
+/**
+ * Information about a spent note (FFI-safe).
+ *
+ * Returned when a nullifier is found in the PIR database.
+ */
+typedef struct FfiPirSpentInfo {
+  /**
+   * The block height where the nullifier was revealed.
+   */
+  uint32_t block_height;
+  /**
+   * The transaction index within the block.
+   */
+  uint16_t tx_index;
+  /**
+   * Padding for alignment (unused).
+   */
+  uint16_t _padding;
+} FfiPirSpentInfo;
+
+/**
+ * An array of SpentInfo results (FFI-safe).
+ *
+ * Each element is either a pointer to FfiSpentInfo (if spent) or null (if unspent).
+ *
+ * # Safety
+ *
+ * - `items` must be non-null and valid for reads for `count * size_of::<*mut FfiSpentInfo>()`
+ * - Each non-null item must point to a valid FfiSpentInfo
+ */
+typedef struct FfiPirSpentInfoArray {
+  /**
+   * Array of nullable pointers to SpentInfo
+   */
+  struct FfiPirSpentInfo **items;
+  /**
+   * Number of items in the array
+   */
+  uintptr_t count;
+} FfiPirSpentInfoArray;
 
 /**
  * Initializes global Rust state, such as the logging infrastructure and threadpools.
@@ -2984,3 +3032,96 @@ void zcashlc_free_single_use_taddr(struct FfiSingleUseTaddr *ptr);
  * - `ptr` must be non-null and must point to a struct having the layout of [`AddressCheckResult`].
  */
 void zcashlc_free_address_check_result(struct FfiAddressCheckResult *ptr);
+
+/**
+ * Initialize PIR client and connect to server.
+ *
+ * Returns opaque pointer to client state or null on error.
+ *
+ * # Safety
+ *
+ * - `server_url` must be a valid null-terminated UTF-8 string
+ */
+struct FfiPirClientHandle *zcashlc_pir_client_create(const char *server_url);
+
+/**
+ * Precompute PIR keys (expensive operation).
+ *
+ * Should be called once after client creation. This operation may take
+ * several seconds (~5-20s depending on hardware).
+ *
+ * Returns true on success, false on error.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid pointer returned by `zcashlc_pir_client_create`
+ */
+bool zcashlc_pir_precompute_keys(struct FfiPirClientHandle *client);
+
+/**
+ * Check if keys have been precomputed.
+ *
+ * Returns true if keys are ready for queries, false otherwise.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid pointer returned by `zcashlc_pir_client_create`
+ */
+bool zcashlc_pir_keys_ready(const struct FfiPirClientHandle *client);
+
+/**
+ * Check a single nullifier via PIR.
+ *
+ * Returns pointer to SpentInfo if the nullifier is spent, null if unspent or on error.
+ * Caller must free result with `zcashlc_pir_free_spent_info`.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid pointer returned by `zcashlc_pir_client_create`
+ * - `nullifier` must be non-null and point to exactly 32 bytes
+ */
+struct FfiPirSpentInfo *zcashlc_pir_check_nullifier(struct FfiPirClientHandle *client,
+                                                    const uint8_t *nullifier);
+
+/**
+ * Check multiple nullifiers via PIR.
+ *
+ * Returns array of SpentInfo (null entries mean unspent).
+ * Caller must free result with `zcashlc_pir_free_spent_info_array`.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid pointer returned by `zcashlc_pir_client_create`
+ * - `nullifiers` must be non-null and point to `count * 32` bytes
+ * - `count` must be the number of 32-byte nullifiers
+ */
+struct FfiPirSpentInfoArray *zcashlc_pir_check_nullifiers(struct FfiPirClientHandle *client,
+                                                          const uint8_t *nullifiers,
+                                                          uintptr_t count);
+
+/**
+ * Free PIR client.
+ *
+ * # Safety
+ *
+ * - `client` must be a valid pointer returned by `zcashlc_pir_client_create`, or null
+ */
+void zcashlc_pir_client_free(struct FfiPirClientHandle *client);
+
+/**
+ * Free SpentInfo.
+ *
+ * # Safety
+ *
+ * - `info` must be a valid pointer returned by `zcashlc_pir_check_nullifier`, or null
+ */
+void zcashlc_pir_free_spent_info(struct FfiPirSpentInfo *info);
+
+/**
+ * Free SpentInfoArray.
+ *
+ * # Safety
+ *
+ * - `array` must be a valid pointer returned by `zcashlc_pir_check_nullifiers`, or null
+ */
+void zcashlc_pir_free_spent_info_array(struct FfiPirSpentInfoArray *array);
