@@ -60,6 +60,10 @@ fn main() {
         .rename_item("SingleUseTaddr", "FfiSingleUseTaddr")
         .rename_item("AddressCheckResult", "FfiAddressCheckResult")
         .rename_item("ZecUsdExchange", "FfiZecUsdExchange")
+        // PIR types
+        .rename_item("PirClientHandle", "FfiPirClientHandle")
+        .rename_item("FfiSpentInfo", "FfiPirSpentInfo")
+        .rename_item("FfiSpentInfoArray", "FfiPirSpentInfoArray")
         .generate()
     {
         b.write_to_file("target/Headers/zcashlc.h");

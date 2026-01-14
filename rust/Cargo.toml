@@ -13,6 +13,10 @@ build = "build.rs"
 
 [dependencies]
 
+# PIR (nullifier lookups)
+nullifier-pir = { package = "nullifier-client", path = "../../../nullifier-pir/crates/client" }
+nullifier-common = { path = "../../../nullifier-pir/crates/common" }
+
 # Zcash
 orchard = "0.11"
 sapling = { package = "sapling-crypto", version = "0.5", default-features = false }
@@ -86,3 +90,6 @@ crate-type = ["staticlib"]
 
 [profile.release]
 lto = true
+
+# Keep this crate as a standalone workspace
+[workspace]

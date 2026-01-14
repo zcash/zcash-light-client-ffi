@@ -94,6 +94,7 @@ use zip32::fingerprint::SeedFingerprint;
 
 mod derivation;
 mod ffi;
+mod pir;
 mod tor;
 
 #[cfg(target_vendor = "apple")]
