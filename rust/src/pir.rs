@@ -3,9 +3,12 @@
 //! This module provides C-compatible FFI functions for performing
 //! privacy-preserving nullifier lookups via PIR.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, OsStr};
 use std::os::raw::c_char;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use std::ptr;
 use std::slice;
 
@@ -13,7 +16,11 @@ use anyhow::{anyhow, Context};
 use ffi_helpers::panic::catch_panic;
 use nullifier_common::{Nullifier, SpentInfo};
 use nullifier_pir::BlockingNullifierPirClient;
+use rand::rngs::OsRng;
 use tracing::debug;
+use zcash_client_backend::data_api::{NullifierQuery, WalletRead};
+use zcash_client_sqlite::{util::SystemClock, WalletDb};
+use zcash_protocol::consensus::Network;
 
 use crate::unwrap_exc_or_null;
 
@@ -310,6 +317,125 @@ pub unsafe extern "C" fn zcashlc_pir_free_spent_info_array(array: *mut FfiSpentI
                     let _ = unsafe { Box::from_raw(item) };
                 }
             }
+        }
+    }
+}
+
+// ============================================================================
+// Wallet Nullifier Retrieval
+// ============================================================================
+
+/// An array of 32-byte nullifiers (FFI-safe).
+///
+/// Each nullifier is 32 bytes. The array contains `count` nullifiers,
+/// stored contiguously as `count * 32` bytes.
+#[repr(C)]
+pub struct FfiNullifierArray {
+    /// Contiguous array of 32-byte nullifiers
+    pub data: *mut u8,
+    /// Number of nullifiers in the array
+    pub count: usize,
+}
+
+/// Get unspent nullifiers from the wallet database.
+///
+/// Returns an array of 32-byte nullifiers for all unspent shielded notes
+/// (both Sapling and Orchard) that the wallet is tracking.
+///
+/// These can be passed to PIR to verify none have been double-spent.
+///
+/// # Safety
+///
+/// - `db_data` must be non-null and valid for reads for `db_data_len` bytes.
+///   Its contents must be a string representing a valid system path.
+/// - `network_id` must be a valid network identifier (0 = testnet, 1 = mainnet).
+/// - Caller must free result with `zcashlc_pir_free_nullifier_array`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_pir_get_unspent_nullifiers(
+    db_data: *const u8,
+    db_data_len: usize,
+    network_id: u32,
+) -> *mut FfiNullifierArray {
+    let res = catch_panic(|| {
+        if db_data.is_null() {
+            return Err(anyhow!("db_data is null"));
+        }
+
+        // Parse network
+        let network = match network_id {
+            0 => Network::TestNetwork,
+            1 => Network::MainNetwork,
+            _ => return Err(anyhow!("Invalid network_id: {}", network_id)),
+        };
+
+        // Open wallet database
+        let db_path = Path::new(OsStr::from_bytes(unsafe {
+            slice::from_raw_parts(db_data, db_data_len)
+        }));
+        let db = WalletDb::for_path(db_path, network, SystemClock, OsRng)
+            .map_err(|e| anyhow!("Failed to open wallet database: {}", e))?;
+
+        // Collect all unspent nullifiers
+        let mut nullifiers: Vec<[u8; 32]> = Vec::new();
+
+        // Get Sapling nullifiers
+        let sapling_nfs = db
+            .get_sapling_nullifiers(NullifierQuery::Unspent)
+            .map_err(|e| anyhow!("Failed to get Sapling nullifiers: {}", e))?;
+        let sapling_count = sapling_nfs.len();
+        for (_, nf) in sapling_nfs {
+            // Sapling Nullifier is a newtype around [u8; 32]
+            nullifiers.push(nf.0);
+        }
+
+        // Get Orchard nullifiers
+        let orchard_nfs = db
+            .get_orchard_nullifiers(NullifierQuery::Unspent)
+            .map_err(|e| anyhow!("Failed to get Orchard nullifiers: {}", e))?;
+        let orchard_count = orchard_nfs.len();
+        for (_, nf) in orchard_nfs {
+            nullifiers.push(nf.to_bytes());
+        }
+
+        debug!(
+            "Retrieved {} unspent nullifiers ({} sapling, {} orchard)",
+            nullifiers.len(),
+            sapling_count,
+            orchard_count
+        );
+
+        // Flatten to contiguous byte array
+        let count = nullifiers.len();
+        let mut data: Vec<u8> = Vec::with_capacity(count * 32);
+        for nf in nullifiers {
+            data.extend_from_slice(&nf);
+        }
+
+        let data_ptr = data.as_mut_ptr();
+        std::mem::forget(data);
+
+        Ok(Box::into_raw(Box::new(FfiNullifierArray {
+            data: data_ptr,
+            count,
+        })))
+    });
+
+    unwrap_exc_or_null(res)
+}
+
+/// Free a nullifier array.
+///
+/// # Safety
+///
+/// - `array` must be a valid pointer returned by `zcashlc_pir_get_unspent_nullifiers`, or null
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zcashlc_pir_free_nullifier_array(array: *mut FfiNullifierArray) {
+    if !array.is_null() {
+        let arr = unsafe { Box::from_raw(array) };
+
+        if !arr.data.is_null() && arr.count > 0 {
+            // Reconstruct and drop the Vec to free memory
+            let _ = unsafe { Vec::from_raw_parts(arr.data, arr.count * 32, arr.count * 32) };
         }
     }
 }
