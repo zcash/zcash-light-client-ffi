@@ -64,6 +64,7 @@ fn main() {
         .rename_item("PirClientHandle", "FfiPirClientHandle")
         .rename_item("FfiSpentInfo", "FfiPirSpentInfo")
         .rename_item("FfiSpentInfoArray", "FfiPirSpentInfoArray")
+        .rename_item("FfiNullifierArray", "FfiPirNullifierArray")
         .generate()
     {
         b.write_to_file("target/Headers/zcashlc.h");
