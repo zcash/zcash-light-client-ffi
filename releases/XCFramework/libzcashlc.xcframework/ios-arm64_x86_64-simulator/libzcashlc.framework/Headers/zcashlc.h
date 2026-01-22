@@ -792,6 +792,23 @@ typedef struct FfiPirSpentInfoArray {
 } FfiPirSpentInfoArray;
 
 /**
+ * An array of 32-byte nullifiers (FFI-safe).
+ *
+ * Each nullifier is 32 bytes. The array contains `count` nullifiers,
+ * stored contiguously as `count * 32` bytes.
+ */
+typedef struct FfiPirNullifierArray {
+  /**
+   * Contiguous array of 32-byte nullifiers
+   */
+  uint8_t *data;
+  /**
+   * Number of nullifiers in the array
+   */
+  uintptr_t count;
+} FfiPirNullifierArray;
+
+/**
  * Initializes global Rust state, such as the logging infrastructure and threadpools.
  *
  * `log_level` defines how the Rust layer logs its events. These values are supported,
@@ -3125,3 +3142,31 @@ void zcashlc_pir_free_spent_info(struct FfiPirSpentInfo *info);
  * - `array` must be a valid pointer returned by `zcashlc_pir_check_nullifiers`, or null
  */
 void zcashlc_pir_free_spent_info_array(struct FfiPirSpentInfoArray *array);
+
+/**
+ * Get unspent nullifiers from the wallet database.
+ *
+ * Returns an array of 32-byte nullifiers for all unspent shielded notes
+ * (both Sapling and Orchard) that the wallet is tracking.
+ *
+ * These can be passed to PIR to verify none have been double-spent.
+ *
+ * # Safety
+ *
+ * - `db_data` must be non-null and valid for reads for `db_data_len` bytes.
+ *   Its contents must be a string representing a valid system path.
+ * - `network_id` must be a valid network identifier (0 = testnet, 1 = mainnet).
+ * - Caller must free result with `zcashlc_pir_free_nullifier_array`.
+ */
+struct FfiPirNullifierArray *zcashlc_pir_get_unspent_nullifiers(const uint8_t *db_data,
+                                                                uintptr_t db_data_len,
+                                                                uint32_t network_id);
+
+/**
+ * Free a nullifier array.
+ *
+ * # Safety
+ *
+ * - `array` must be a valid pointer returned by `zcashlc_pir_get_unspent_nullifiers`, or null
+ */
+void zcashlc_pir_free_nullifier_array(struct FfiPirNullifierArray *array);
