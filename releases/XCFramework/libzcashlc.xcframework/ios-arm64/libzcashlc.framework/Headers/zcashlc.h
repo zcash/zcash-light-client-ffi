@@ -89,6 +89,24 @@ typedef enum FfiZecUsdExchange {
 } FfiZecUsdExchange;
 
 /**
+ * PIR protocol selection (FFI-safe).
+ *
+ * Choose based on your network constraints:
+ * - `Ypir` (0): Larger queries (~5.8 MB) but faster server processing
+ * - `Inspire` (1): Smaller queries (~416 KB) but longer key prep
+ */
+typedef enum FfiPirProtocol {
+  /**
+   * YPIR+SP protocol - larger queries, faster server
+   */
+  Ypir = 0,
+  /**
+   * InsPIRe protocol - smaller queries, slower key prep
+   */
+  Inspire = 1,
+} FfiPirProtocol;
+
+/**
  * A struct that contains a ZIP 325 Account Metadata Key.
  */
 typedef struct FfiAccountMetadataKey FfiAccountMetadataKey;
@@ -3055,11 +3073,22 @@ void zcashlc_free_address_check_result(struct FfiAddressCheckResult *ptr);
  *
  * Returns opaque pointer to client state or null on error.
  *
+ * # Arguments
+ *
+ * * `server_url` - Base URL of the PIR server (e.g., "http://localhost:3001")
+ * * `protocol` - PIR protocol to use (0 = YPIR, 1 = InsPIRe)
+ *
+ * # Protocol Selection
+ *
+ * - **YPIR (0)**: ~5.8 MB queries, ~25s key prep, faster server processing
+ * - **InsPIRe (1)**: ~416 KB queries, ~3s key prep, better for mobile networks
+ *
  * # Safety
  *
  * - `server_url` must be a valid null-terminated UTF-8 string
  */
-struct FfiPirClientHandle *zcashlc_pir_client_create(const char *server_url);
+struct FfiPirClientHandle *zcashlc_pir_client_create(const char *server_url,
+                                                     enum FfiPirProtocol protocol);
 
 /**
  * Precompute PIR keys (expensive operation).
