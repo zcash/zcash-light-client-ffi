@@ -15,7 +15,7 @@ use std::slice;
 use anyhow::{anyhow, Context};
 use ffi_helpers::panic::catch_panic;
 use nullifier_common::{Nullifier, SpentInfo};
-use nullifier_pir::BlockingNullifierPirClient;
+use nullifier_pir::{BlockingNullifierPirClient, PirProtocol};
 use rand::rngs::OsRng;
 use tracing::debug;
 use zcash_client_backend::data_api::{NullifierQuery, WalletRead};
@@ -27,6 +27,29 @@ use crate::unwrap_exc_or_null;
 // ============================================================================
 // FFI Types
 // ============================================================================
+
+/// PIR protocol selection (FFI-safe).
+///
+/// Choose based on your network constraints:
+/// - `Ypir` (0): Larger queries (~5.8 MB) but faster server processing
+/// - `Inspire` (1): Smaller queries (~416 KB) but longer key prep
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiPirProtocol {
+    /// YPIR+SP protocol - larger queries, faster server
+    Ypir = 0,
+    /// InsPIRe protocol - smaller queries, slower key prep
+    Inspire = 1,
+}
+
+impl From<FfiPirProtocol> for PirProtocol {
+    fn from(ffi: FfiPirProtocol) -> Self {
+        match ffi {
+            FfiPirProtocol::Ypir => PirProtocol::Ypir,
+            FfiPirProtocol::Inspire => PirProtocol::Inspire,
+        }
+    }
+}
 
 /// Information about a spent note (FFI-safe).
 ///
@@ -82,12 +105,23 @@ pub struct PirClientHandle {
 ///
 /// Returns opaque pointer to client state or null on error.
 ///
+/// # Arguments
+///
+/// * `server_url` - Base URL of the PIR server (e.g., "http://localhost:3001")
+/// * `protocol` - PIR protocol to use (0 = YPIR, 1 = InsPIRe)
+///
+/// # Protocol Selection
+///
+/// - **YPIR (0)**: ~5.8 MB queries, ~25s key prep, faster server processing
+/// - **InsPIRe (1)**: ~416 KB queries, ~3s key prep, better for mobile networks
+///
 /// # Safety
 ///
 /// - `server_url` must be a valid null-terminated UTF-8 string
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zcashlc_pir_client_create(
     server_url: *const c_char,
+    protocol: FfiPirProtocol,
 ) -> *mut PirClientHandle {
     let res = catch_panic(|| {
         if server_url.is_null() {
@@ -98,9 +132,11 @@ pub unsafe extern "C" fn zcashlc_pir_client_create(
             .to_str()
             .context("Invalid UTF-8 in server_url")?;
 
-        debug!("Creating PIR client for server: {}", url_str);
+        let pir_protocol: PirProtocol = protocol.into();
 
-        let client = BlockingNullifierPirClient::connect(url_str)
+        debug!("Creating PIR client for server: {} (protocol: {:?})", url_str, pir_protocol);
+
+        let client = BlockingNullifierPirClient::connect(url_str, pir_protocol)
             .map_err(|e| anyhow!("Failed to connect to PIR server: {}", e))?;
 
         Ok(Box::into_raw(Box::new(PirClientHandle { client })))
