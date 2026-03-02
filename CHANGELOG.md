@@ -6,6 +6,12 @@ and this library adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.19.2 - PENDING
+
+### Fixed
+- Updated to `shardtree 0.6.2, zcash_client_sqlite 0.19.4` to fix a note
+  commitment tree corruption bug.
+
 ## 0.19.1 - 2025-11-26
 
 ### Added
